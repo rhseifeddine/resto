@@ -1086,8 +1086,9 @@ class RestaurantApp(MDApp):
     def continue_trial(self, dialog_ref):
         if dialog_ref:
             dialog_ref.dismiss()
-        import threading
-        threading.Thread(target=self.check_server_heartbeat, daemon=True).start()
+            
+        Clock.schedule_interval(self.check_server_heartbeat, 5)
+        
         try:
             if self.store.exists('session'):
                 session = self.store.get('session')
@@ -1104,13 +1105,9 @@ class RestaurantApp(MDApp):
         except:
             pass
 
-    def check_server_heartbeat(self):
-        while not self.stop_heartbeat:
-            from kivy.clock import Clock
-            Clock.schedule_once(lambda dt: self._run_socket_ping_logic(), 0)
-            time.sleep(5)
-
-    def _run_socket_ping_logic(self):
+    def check_server_heartbeat(self, dt=None):
+        if self.stop_heartbeat:
+            return False
         self._ping_local()
 
     def _ping_local(self):
@@ -1118,15 +1115,8 @@ class RestaurantApp(MDApp):
             self._ping_external()
             return
         url = f'http://{self.local_server_ip}:{DEFAULT_PORT}/api/ping'
-        start_time = time.time()
-
-        def on_success(req, res):
-            ping_val = int((time.time() - start_time) * 1000)
-            self._finalize_ping_ui(True, ping_val, self.local_server_ip)
-
-        def on_fail_or_error(req, err):
-            self._ping_external()
-        UrlRequest(url, on_success=on_success, on_failure=on_fail_or_error, on_error=on_fail_or_error, timeout=5)
+        import threading
+        threading.Thread(target=self._perform_ping_request, args=(url, True, self.local_server_ip), daemon=True).start()
 
     def _ping_external(self):
         if not self.external_server_ip:
@@ -1138,18 +1128,42 @@ class RestaurantApp(MDApp):
             url = f'https://{clean_host}/api/ping'
         else:
             url = f'http://{self.external_server_ip}:{DEFAULT_PORT}/api/ping'
+        import threading
+        threading.Thread(target=self._perform_ping_request, args=(url, False, self.external_server_ip), daemon=True).start()
+
+    def _perform_ping_request(self, url, is_local, confirmed_ip):
+        import time
+        import requests
+        from kivy.clock import Clock
+        
+        if not hasattr(self, 'ping_session'):
+            self.ping_session = requests.Session()
+            self.ping_session.headers.update({'User-Agent': 'MagProMobile-Resto/1.0'})
+            if self.store and self.store.exists('config'):
+                pin = self.store.get('config').get('server_pin', '')
+                if pin:
+                    self.ping_session.headers.update({'X-Server-PIN': str(pin)})
+
         start_time = time.time()
+        try:
+            res = self.ping_session.get(url, timeout=3)
+            if res.status_code == 200:
+                ping_val = int((time.time() - start_time) * 1000)
+                self._finalize_ping_ui(True, ping_val, confirmed_ip)
+            elif res.status_code == 403:
+                Clock.schedule_once(lambda dt: self.notify('Code PIN du Serveur Incorrect!', 'error'), 0)
+                self._finalize_ping_ui(False, 0, None)
+            elif is_local:
+                self._ping_external()
+            else:
+                self._finalize_ping_ui(False, 0, None)
+        except Exception:
+            if is_local:
+                self._ping_external()
+            else:
+                self._finalize_ping_ui(False, 0, None)
 
-        def on_success(req, res):
-            ping_val = int((time.time() - start_time) * 1000)
-            self._finalize_ping_ui(True, ping_val, self.external_server_ip)
-
-        def on_fail_or_error(req, err):
-            if req.resp_status == 403:
-                self.notify('Code PIN du Serveur Incorrect!', 'error')
-            self._finalize_ping_ui(False, 0, None)
-        UrlRequest(url, on_success=on_success, on_failure=on_fail_or_error, on_error=on_fail_or_error, timeout=7)
-
+    @mainthread
     def _finalize_ping_ui(self, success, ping_val, confirmed_ip):
         self.is_server_reachable = success
         if success and confirmed_ip:
@@ -1161,8 +1175,7 @@ class RestaurantApp(MDApp):
                     self.ws_manager.disconnect()
                     from kivy.clock import Clock
                     Clock.schedule_once(lambda dt: self.ws_manager.connect(), 1)
-        from kivy.clock import Clock
-        Clock.schedule_once(lambda dt: self.update_status_bar_safe(success, ping_val, self.server_ip), 0)
+        self.update_status_bar_safe(success, ping_val, self.server_ip)
 
     def update_status_bar_safe(self, connected, ping_ms, ip_used):
         if not self.status_bar_label:
@@ -1905,7 +1918,7 @@ class RestaurantApp(MDApp):
         if self.ws_manager:
             self.ws_manager.disconnect()
         from kivy.clock import Clock
-        Clock.schedule_once(lambda dt: self._run_socket_ping_logic(), 0)
+        Clock.schedule_once(lambda dt: self._ping_local(), 0)
         Clock.schedule_once(lambda dt: self.fetch_tables(manual=True), 0.5)
 
     def perform_logout(self, dialog):
