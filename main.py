@@ -1086,9 +1086,7 @@ class RestaurantApp(MDApp):
     def continue_trial(self, dialog_ref):
         if dialog_ref:
             dialog_ref.dismiss()
-            
         Clock.schedule_interval(self.check_server_heartbeat, 5)
-        
         try:
             if self.store.exists('session'):
                 session = self.store.get('session')
@@ -1135,7 +1133,6 @@ class RestaurantApp(MDApp):
         import time
         import requests
         from kivy.clock import Clock
-        
         if not hasattr(self, 'ping_session'):
             self.ping_session = requests.Session()
             self.ping_session.headers.update({'User-Agent': 'MagProMobile-Resto/1.0'})
@@ -1143,7 +1140,6 @@ class RestaurantApp(MDApp):
                 pin = self.store.get('config').get('server_pin', '')
                 if pin:
                     self.ping_session.headers.update({'X-Server-PIN': str(pin)})
-
         start_time = time.time()
         try:
             res = self.ping_session.get(url, timeout=3)
@@ -1200,7 +1196,6 @@ class RestaurantApp(MDApp):
 
     def build(self):
         Window.render_context['precision'] = 'lowp'
-        Window.render_context['precision'] = 'lowp'
         Config.set('graphics', 'max_fps', '60')
         Config.set('graphics', 'multisamples', '0')
         Config.set('kivy', 'log_level', 'error')
@@ -1234,11 +1229,7 @@ class RestaurantApp(MDApp):
         logging.basicConfig(filename=log_path, level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
         self.store = load_safe_store('app_settings.json')
         self.image_cache = ImageCacheManager(base_dir=self.data_dir)
-        if self.store.exists('config'):
-            cfg = self.store.get('config')
-            self.local_server_ip = cfg.get('ip', '192.168.1.100')
-            self.external_server_ip = cfg.get('ext_ip', '')
-            self.server_ip = self.local_server_ip
+        self.init_servers_config()
         if self.store.exists('user'):
             self.current_user_name = self.store.get('user')['name']
         self.ws_manager = WebSocketManager(self.server_ip, DEFAULT_PORT, self.on_websocket_message)
@@ -1255,16 +1246,23 @@ class RestaurantApp(MDApp):
         background_layout.add_widget(top_bg)
         settings_btn = MDIconButton(icon='cog', theme_text_color='Custom', text_color=(1, 1, 1, 1), pos_hint={'top': 0.98, 'right': 0.98}, on_release=self.open_ip_settings)
         background_layout.add_widget(settings_btn)
-        card_login = MDCard(orientation='vertical', size_hint=(0.85, None), height=dp(400), pos_hint={'center_x': 0.5, 'center_y': 0.5}, padding=dp(30), spacing=dp(20), radius=[20], elevation=10, md_bg_color=(1, 1, 1, 1))
+        card_login = MDCard(orientation='vertical', size_hint=(0.85, None), height=dp(460), pos_hint={'center_x': 0.5, 'center_y': 0.5}, padding=dp(30), spacing=dp(15), radius=[20, 20, 20, 20], elevation=10, md_bg_color=(1, 1, 1, 1))
         icon_box = MDBoxLayout(size_hint_y=None, height=dp(80), pos_hint={'center_x': 0.5})
         main_icon = MDIcon(icon='silverware-variant', font_size='70sp', theme_text_color='Custom', text_color=self.theme_cls.primary_color, pos_hint={'center_x': 0.5, 'center_y': 0.5})
         icon_box.add_widget(main_icon)
         card_login.add_widget(icon_box)
         title_label = MDLabel(text='MagPro Restaurant', halign='center', font_style='H5', theme_text_color='Primary', bold=True)
         card_login.add_widget(title_label)
+        self.btn_current_restaurant = MDCard(orientation='horizontal', size_hint=(1, None), height=dp(45), radius=[15, 15, 15, 15], md_bg_color=(0.1, 0.5, 0.8, 1), padding=[dp(15), 0, dp(15), 0], spacing=dp(10), ripple_behavior=True, on_release=self.open_restaurant_selector)
+        self.btn_current_restaurant.add_widget(MDIcon(icon='store', theme_text_color='Custom', text_color=(1, 1, 1, 1), font_size='20sp', pos_hint={'center_y': 0.5}))
+        self.lbl_current_restaurant = MDLabel(text='Chargement...', theme_text_color='Custom', text_color=(1, 1, 1, 1), bold=True, halign='center', font_name='ArabicFont', font_size='16sp')
+        self.btn_current_restaurant.add_widget(self.lbl_current_restaurant)
+        self.icon_chevron_restaurant = MDIcon(icon='chevron-down', theme_text_color='Custom', text_color=(1, 1, 1, 1), font_size='24sp', pos_hint={'center_y': 0.5})
+        self.btn_current_restaurant.add_widget(self.icon_chevron_restaurant)
+        card_login.add_widget(self.btn_current_restaurant)
         self.username_field = SmartTextField(text=self.current_user_name, hint_text="Nom d'utilisateur", icon_right='account', mode='rectangle')
         self.password_field = SmartTextField(hint_text='Mot de passe', icon_right='key', password=True, mode='rectangle')
-        btn_login = MDFillRoundFlatButton(text='CONNEXION', font_size='18sp', size_hint_x=1, height=dp(50), on_release=self.do_login)
+        btn_login = MDFillRoundFlatButton(text='CONNEXION', font_size='18sp', size_hint_x=1, height=dp(50), pos_hint={'center_x': 0.5}, on_release=self.do_login)
         card_login.add_widget(self.username_field)
         card_login.add_widget(self.password_field)
         card_login.add_widget(MDBoxLayout(size_hint_y=None, height=dp(10)))
@@ -1288,7 +1286,7 @@ class RestaurantApp(MDApp):
         layout_o = MDBoxLayout(orientation='vertical')
         self.toolbar_order = MDTopAppBar(title='Prise de commande', left_action_items=[['arrow-left', lambda x: self.go_back()]], elevation=0)
         layout_o.add_widget(self.toolbar_order)
-        header_container = MDCard(orientation='vertical', size_hint_y=None, height=dp(120), elevation=4, radius=[0], md_bg_color=(1, 1, 1, 1), spacing=dp(5), padding=[0, 0, 0, dp(10)])
+        header_container = MDCard(orientation='vertical', size_hint_y=None, height=dp(120), elevation=4, radius=[0, 0, 0, 0], md_bg_color=(1, 1, 1, 1), spacing=dp(5), padding=[0, 0, 0, dp(10)])
         search_box = MDBoxLayout(padding=(15, 10, 15, 0), size_hint_y=None, height=dp(60))
         self.search_field = SmartTextField(hint_text='Rechercher article...', mode='rectangle', icon_right='magnify')
         self.search_field.bind(text=self.filter_products_live)
@@ -1311,6 +1309,7 @@ class RestaurantApp(MDApp):
         from kivy.factory import Factory
         self.admin_screen = Factory.AdminDashboardScreen()
         self.screen_manager.add_widget(self.admin_screen)
+        self.apply_active_server()
         Clock.schedule_once(lambda dt: self.ws_manager.connect(), 1)
         Window.bind(size=self.update_orientation_layout)
         Clock.schedule_once(lambda dt: self.update_orientation_layout(Window, Window.size), 1)
@@ -1830,13 +1829,114 @@ class RestaurantApp(MDApp):
         dialog = MDDialog(title='Erreur Critique', text=msg, buttons=[MDFlatButton(text='OK', on_release=lambda x: dialog.dismiss())])
         dialog.open()
 
+    def init_servers_config(self):
+        if not self.store.exists('servers_config'):
+            old_ip = '192.168.1.100'
+            old_ext = ''
+            old_pin = ''
+            if self.store.exists('config'):
+                cfg = self.store.get('config')
+                old_ip = cfg.get('ip', '192.168.1.100')
+                old_ext = cfg.get('ext_ip', '')
+                old_pin = cfg.get('server_pin', '')
+            default_server = {'name': 'Restaurant Principal', 'local_ip': old_ip, 'ext_ip': old_ext, 'pin': old_pin}
+            self.store.put('servers_config', list=[default_server], active_index=0)
+
+    def apply_active_server(self):
+        if not self.store.exists('servers_config'):
+            self.init_servers_config()
+        data = self.store.get('servers_config')
+        servers = data.get('list', [])
+        idx = data.get('active_index', 0)
+        if not servers:
+            return
+        if idx >= len(servers):
+            idx = 0
+        active_srv = servers[idx]
+        self.local_server_ip = active_srv.get('local_ip', '192.168.1.100')
+        self.external_server_ip = active_srv.get('ext_ip', '')
+        self.server_ip = self.local_server_ip
+        self.active_server_ip = self.local_server_ip
+        self.store.put('config', ip=self.local_server_ip, ext_ip=self.external_server_ip, server_pin=active_srv.get('pin', ''))
+        if hasattr(self, 'lbl_current_restaurant') and self.lbl_current_restaurant:
+            self.lbl_current_restaurant.text = self.fix_text(active_srv.get('name', 'Restaurant Inconnu'))
+        if hasattr(self, 'icon_chevron_restaurant') and self.icon_chevron_restaurant:
+            if len(servers) <= 1:
+                self.icon_chevron_restaurant.opacity = 0
+            else:
+                self.icon_chevron_restaurant.opacity = 1
+        is_admin = False
+        current_role = getattr(self, 'current_user_role', '')
+        if current_role in ['مدير', 'Admin', 'Manager']:
+            is_admin = True
+        elif not self.store.exists('user'):
+            is_admin = True
+        else:
+            saved_role = self.store.get('user').get('role', '')
+            if saved_role in ['مدير', 'Admin', 'Manager']:
+                is_admin = True
+        if hasattr(self, 'btn_current_restaurant') and self.btn_current_restaurant:
+            from kivy.metrics import dp
+            if is_admin:
+                self.btn_current_restaurant.opacity = 1
+                self.btn_current_restaurant.height = dp(45)
+                self.btn_current_restaurant.disabled = False
+            else:
+                self.btn_current_restaurant.opacity = 0
+                self.btn_current_restaurant.height = 0
+                self.btn_current_restaurant.disabled = True
+        if hasattr(self, 'ws_manager') and self.ws_manager:
+            self.ws_manager.server_ip = self.local_server_ip
+            self.ws_manager.disconnect()
+            from kivy.clock import Clock
+            Clock.schedule_once(lambda dt: self.ws_manager.connect(), 1)
+            Clock.schedule_once(lambda dt: self._ping_local(), 0.5)
+
+    def open_restaurant_selector(self, instance=None):
+        data = self.store.get('servers_config')
+        servers = data.get('list', [])
+        if len(servers) <= 1:
+            return
+        content = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing=dp(5))
+        scroll = MDScrollView(size_hint_y=None, height=dp(250))
+        list_layout = MDBoxLayout(orientation='vertical', adaptive_height=True)
+        for i, srv in enumerate(servers):
+            is_active = i == data.get('active_index', 0)
+            card = MDCard(orientation='vertical', size_hint_y=None, height=dp(55), elevation=0, md_bg_color=(0, 0, 0, 0), ripple_behavior=True, on_release=lambda x, idx=i: self.set_active_restaurant(idx))
+            lbl = MDLabel(text=self.fix_text(srv.get('name', 'Inconnu')), halign='center', valign='center', font_name='ArabicFont', font_size='20sp', bold=is_active, theme_text_color='Custom', text_color=(0.1, 0.4, 0.7, 1) if is_active else (0.3, 0.3, 0.3, 1))
+            card.add_widget(lbl)
+            list_layout.add_widget(card)
+            list_layout.add_widget(MDSeparator(height=dp(1)))
+        scroll.add_widget(list_layout)
+        content.add_widget(scroll)
+        self.dialog_select_resto = MDDialog(title='Choisir un restaurant', type='custom', content_cls=content, radius=[15, 15, 15, 15], buttons=[MDFlatButton(text='ANNULER', theme_text_color='Error', on_release=lambda x: self.dialog_select_resto.dismiss())])
+        self.dialog_select_resto.open()
+
+    def set_active_restaurant(self, index):
+        data = self.store.get('servers_config')
+        self.store.put('servers_config', list=data.get('list', []), active_index=index)
+        self.apply_active_server()
+        if hasattr(self, 'dialog_select_resto') and self.dialog_select_resto:
+            self.dialog_select_resto.dismiss()
+        self.notify('Restaurant sélectionné avec succès', 'success')
+
     def open_ip_settings(self, instance=None):
         import webbrowser
+        from kivy.core.clipboard import Clipboard
         if hasattr(self, 'dialog_ip') and getattr(self, 'dialog_ip', None):
             self.dialog_ip.dismiss()
-        content = MDBoxLayout(orientation='vertical', spacing='15dp', size_hint_y=None, height=dp(420), padding=[0, dp(10), 0, 0])
+        is_admin = False
+        current_role = getattr(self, 'current_user_role', '')
+        if current_role in ['مدير', 'Admin', 'Manager']:
+            is_admin = True
+        elif not self.store.exists('user'):
+            is_admin = True
+        else:
+            saved_role = self.store.get('user').get('role', '')
+            if saved_role in ['مدير', 'Admin', 'Manager']:
+                is_admin = True
+        content = MDBoxLayout(orientation='vertical', spacing=dp(15), size_hint_y=None, adaptive_height=True, padding=[0, dp(10), 0, dp(5)])
         status, days_left = self.check_license_validity()
-        from kivy.core.clipboard import Clipboard
         if status == 'ACTIVATED':
             l_title = 'Licence Activée'
             l_icon = 'shield-check'
@@ -1848,13 +1948,13 @@ class RestaurantApp(MDApp):
             def copy_action(inst):
                 Clipboard.copy(activ_key)
                 self.notify("Clé d'activation copiée", 'success')
-            lic_card = MDCard(orientation='vertical', padding=dp(15), spacing=dp(10), size_hint_y=None, adaptive_height=True, md_bg_color=(0.95, 0.98, 0.95, 1), radius=[8], ripple_behavior=True)
+            lic_card = MDCard(orientation='vertical', padding=dp(12), spacing=dp(5), size_hint_y=None, adaptive_height=True, md_bg_color=(0.95, 0.98, 0.95, 1), radius=[12, 12, 12, 12], ripple_behavior=True)
             lic_card.bind(on_release=copy_action)
             top_row = MDBoxLayout(orientation='horizontal', adaptive_height=True, spacing=dp(10))
             top_row.add_widget(MDIcon(icon=l_icon, theme_text_color='Custom', text_color=l_color, font_size='24sp', pos_hint={'center_y': 0.5}))
             top_row.add_widget(MDLabel(text=l_title, font_style='Subtitle1', bold=True, theme_text_color='Custom', text_color=l_color, pos_hint={'center_y': 0.5}))
             lic_card.add_widget(top_row)
-            lic_card.add_widget(MDLabel(text='Clé (Appuyez pour copier):', font_style='Caption', theme_text_color='Secondary'))
+            lic_card.add_widget(MDLabel(text='Clé (Appuyez pour copier):', font_style='Caption', theme_text_color='Secondary', adaptive_height=True))
             lic_card.add_widget(MDLabel(text=activ_key, font_style='Caption', theme_text_color='Primary', font_name='Roboto', bold=True, adaptive_height=True))
         else:
             l_title = f'Essai : {days_left} jours restants'
@@ -1865,61 +1965,143 @@ class RestaurantApp(MDApp):
             def copy_action(inst):
                 Clipboard.copy(device_id)
                 self.notify('ID copié', 'success')
-            lic_card = MDCard(orientation='vertical', padding=dp(15), spacing=dp(10), size_hint_y=None, adaptive_height=True, md_bg_color=(1, 0.95, 0.9, 1), radius=[8], ripple_behavior=True)
+            lic_card = MDCard(orientation='vertical', padding=dp(12), spacing=dp(5), size_hint_y=None, adaptive_height=True, md_bg_color=(1, 0.95, 0.9, 1), radius=[12, 12, 12, 12], ripple_behavior=True)
             lic_card.bind(on_release=copy_action)
             top_row = MDBoxLayout(orientation='horizontal', adaptive_height=True, spacing=dp(10))
             top_row.add_widget(MDIcon(icon=l_icon, theme_text_color='Custom', text_color=l_color, font_size='24sp', pos_hint={'center_y': 0.5}))
             top_row.add_widget(MDLabel(text=l_title, font_style='Subtitle1', bold=True, theme_text_color='Custom', text_color=l_color, pos_hint={'center_y': 0.5}))
             lic_card.add_widget(top_row)
-            lic_card.add_widget(MDLabel(text='ID Appareil (Appuyez pour copier):', font_style='Caption', theme_text_color='Secondary'))
+            lic_card.add_widget(MDLabel(text='ID Appareil (Appuyez pour copier):', font_style='Caption', theme_text_color='Secondary', adaptive_height=True))
             lic_card.add_widget(MDLabel(text=device_id, font_style='Caption', theme_text_color='Primary', font_name='Roboto', bold=True, adaptive_height=True))
         content.add_widget(lic_card)
-        saved_pin = ''
-        if self.store.exists('config'):
-            saved_pin = str(self.store.get('config').get('server_pin', ''))
-        self.ip_field_dialog = MDTextField(text=self.local_server_ip, hint_text='IP Locale (Wifi)', mode='rectangle', icon_right='router-wireless')
-        self.ext_ip_field_dialog = MDTextField(text=self.external_server_ip, hint_text='IP Externe (Internet)', mode='rectangle', icon_right='web')
-        self.field_server_pin = MDTextField(text=saved_pin, hint_text='Code PIN du Serveur (Cloudflare)', mode='rectangle', icon_right='lock-outline', password=True)
-        content.add_widget(self.ip_field_dialog)
-        content.add_widget(self.ext_ip_field_dialog)
-        content.add_widget(self.field_server_pin)
-
-        def on_ext_ip_change(instance, text):
-            import re
-            if re.search('[a-zA-Z]', text):
-                self.field_server_pin.opacity = 1
-                self.field_server_pin.disabled = False
-            else:
-                self.field_server_pin.opacity = 0
-                self.field_server_pin.disabled = True
-        self.ext_ip_field_dialog.bind(text=on_ext_ip_change)
-        on_ext_ip_change(self.ext_ip_field_dialog, self.ext_ip_field_dialog.text)
-        content.add_widget(MDBoxLayout(size_hint_y=None, height='5dp'))
-        btn_update = MDFillRoundFlatIconButton(text="Mise à jour de l'application", icon='cloud-download', md_bg_color=(0, 0.6, 0.8, 1), text_color=(1, 1, 1, 1), size_hint_x=1, on_release=lambda x: [self.dialog_ip.dismiss(), webbrowser.open('https://resto.magpro-soft.com/')])
-        content.add_widget(btn_update)
-        self.dialog_ip = MDDialog(title='Configuration Serveur', type='custom', content_cls=content, buttons=[MDFlatButton(text='ANNULER', on_release=lambda x: self.dialog_ip.dismiss()), MDRaisedButton(text='ENREGISTRER', md_bg_color=(0, 0.6, 0, 1), on_release=self.save_ip_settings)])
+        if is_admin:
+            content.add_widget(MDLabel(text='Vos Restaurants :', bold=True, theme_text_color='Secondary', font_style='Body2', size_hint_y=None, height=dp(20)))
+            data = self.store.get('servers_config')
+            servers = data.get('list', [])
+            active_idx = data.get('active_index', 0)
+            scroll_height = min(len(servers) * dp(70), dp(200))
+            scroll_height = max(scroll_height, dp(70))
+            scroll = MDScrollView(size_hint_y=None, height=scroll_height)
+            list_layout = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing=dp(8), padding=[dp(2), dp(2), dp(2), dp(10)])
+            for i, srv in enumerate(servers):
+                is_active = i == active_idx
+                card = MDCard(orientation='horizontal', size_hint_y=None, height=dp(60), padding=[dp(15), dp(5), dp(15), dp(5)], spacing=dp(15), radius=[12, 12, 12, 12], md_bg_color=(0.9, 0.97, 0.9, 1) if is_active else (1, 1, 1, 1), elevation=1, ripple_behavior=True, on_release=lambda x, idx=i: self.open_edit_server_dialog(idx))
+                icon_name = 'check-circle' if is_active else 'store-outline'
+                icon_color = (0, 0.6, 0.2, 1) if is_active else (0.5, 0.5, 0.5, 1)
+                card.add_widget(MDIcon(icon=icon_name, theme_text_color='Custom', text_color=icon_color, font_size='26sp', pos_hint={'center_y': 0.5}))
+                card.add_widget(MDLabel(text=self.fix_text(srv.get('name', 'Restaurant Inconnu')), bold=is_active, font_name='ArabicFont', font_size='17sp', theme_text_color='Primary'))
+                card.add_widget(MDIcon(icon='chevron-right', theme_text_color='Hint', font_size='24sp', pos_hint={'center_y': 0.5}))
+                list_layout.add_widget(card)
+            scroll.add_widget(list_layout)
+            content.add_widget(scroll)
+        btns_box = MDBoxLayout(orientation='vertical', spacing=dp(10), adaptive_height=True)
+        if is_admin:
+            btn_add = MDFillRoundFlatIconButton(text='Ajouter un autre restaurant', icon='plus-circle', font_size='15sp', size_hint_x=1, height=dp(48), md_bg_color=(0.1, 0.5, 0.8, 1), on_release=lambda x: self.open_edit_server_dialog(None))
+            btns_box.add_widget(btn_add)
+        btn_update = MDFillRoundFlatIconButton(text="Mise à jour de l'application", icon='cloud-download', font_size='15sp', md_bg_color=(0.2, 0.6, 0.6, 1), text_color=(1, 1, 1, 1), size_hint_x=1, height=dp(48), on_release=lambda x: [self.dialog_ip.dismiss(), webbrowser.open('https://resto.magpro-soft.com/')])
+        btns_box.add_widget(btn_update)
+        content.add_widget(btns_box)
+        self.dialog_ip = MDDialog(title='Configuration', type='custom', content_cls=content, radius=[15, 15, 15, 15], buttons=[MDFlatButton(text='FERMER', theme_text_color='Error', on_release=lambda x: self.dialog_ip.dismiss())])
         self.dialog_ip.open()
 
-    def save_ip_settings(self, instance):
-        new_local = self.ip_field_dialog.text.strip()
-        new_ext = self.ext_ip_field_dialog.text.strip()
-        server_pin = self.field_server_pin.text.strip()
-        if new_local and (not DataValidator.validate_ip(new_local)):
-            self.notify('IP Locale invalide', 'error')
-            return
-        self.local_server_ip = new_local
-        self.external_server_ip = new_ext
-        self.server_ip = new_local
-        self.active_server_ip = new_local
-        self.store.put('config', ip=new_local, ext_ip=new_ext, server_pin=server_pin)
-        self.notify('Configuration sauvegardée', 'success')
-        if self.dialog_ip:
+    def open_edit_server_dialog(self, index):
+        if hasattr(self, 'dialog_ip') and getattr(self, 'dialog_ip', None):
             self.dialog_ip.dismiss()
-        if self.ws_manager:
-            self.ws_manager.disconnect()
+        import re
         from kivy.clock import Clock
-        Clock.schedule_once(lambda dt: self._ping_local(), 0)
-        Clock.schedule_once(lambda dt: self.fetch_tables(manual=True), 0.5)
+        from kivy.animation import Animation
+        is_new = index is None
+        srv_name = ''
+        srv_local = '192.168.1.100'
+        srv_ext = ''
+        srv_pin = ''
+        if not is_new:
+            data = self.store.get('servers_config')
+            servers = data.get('list', [])
+            srv = servers[index]
+            srv_name = srv.get('name', '')
+            srv_local = srv.get('local_ip', '192.168.1.100')
+            srv_ext = srv.get('ext_ip', '')
+            srv_pin = srv.get('pin', '')
+        content = MDBoxLayout(orientation='vertical', spacing=dp(20), size_hint_y=None, adaptive_height=True, padding=[0, dp(5), 0, 0])
+        spacer = MDBoxLayout(size_hint_y=None, height=dp(30))
+        content.add_widget(spacer)
+        self.field_srv_name = SmartTextField(text=srv_name, hint_text='Nom du restaurant', mode='rectangle', icon_right='store')
+        self.field_srv_local = MDTextField(text=srv_local, hint_text='IP Locale (Wifi)', mode='rectangle', icon_right='router-wireless')
+        self.field_srv_ext = MDTextField(text=srv_ext, hint_text='IP Externe (Internet / Cloudflare)', mode='rectangle', icon_right='web')
+        initial_has_letters = bool(srv_ext.strip() and re.search('[a-zA-Z]', srv_ext))
+        initial_height = dp(75) if initial_has_letters else 0
+        initial_opacity = 1 if initial_has_letters else 0
+        self.pin_container = MDBoxLayout(orientation='vertical', size_hint_y=None, height=initial_height, opacity=initial_opacity)
+        self.field_srv_pin = MDTextField(text=srv_pin, hint_text='Code PIN du Serveur', mode='rectangle', icon_right='lock-outline', password=True)
+        self.field_srv_pin.disabled = not initial_has_letters
+        self.pin_container.add_widget(self.field_srv_pin)
+        content.add_widget(self.field_srv_name)
+        content.add_widget(self.field_srv_local)
+        content.add_widget(self.field_srv_ext)
+        content.add_widget(self.pin_container)
+
+        def check_ext_ip(instance, text):
+            has_letters = bool(text.strip() and re.search('[a-zA-Z]', text))
+            if has_letters and self.pin_container.height == 0:
+                self.field_srv_pin.disabled = False
+                anim = Animation(height=dp(75), opacity=1, d=0.25)
+                anim.start(self.pin_container)
+            elif not has_letters and self.pin_container.height > 0:
+                self.field_srv_pin.disabled = True
+                self.field_srv_pin.text = ''
+                anim = Animation(height=0, opacity=0, d=0.2)
+                anim.start(self.pin_container)
+        self.field_srv_ext.bind(text=check_ext_ip)
+        buttons = [MDFlatButton(text='ANNULER', on_release=lambda x: [self.dialog_edit_srv.dismiss(), self.open_ip_settings()])]
+        if not is_new:
+            buttons.append(MDRaisedButton(text='SUPPRIMER', md_bg_color=(0.8, 0.2, 0.2, 1), on_release=lambda x: self.delete_server_config(index)))
+        buttons.append(MDRaisedButton(text='ENREGISTRER', md_bg_color=(0, 0.6, 0.2, 1), on_release=lambda x: self.save_server_config(index)))
+        title_text = 'Nouveau Restaurant' if is_new else f'Détails : {self.fix_text(srv_name)}'
+        self.dialog_edit_srv = MDDialog(title=title_text, type='custom', content_cls=content, radius=[15, 15, 15, 15], buttons=buttons)
+        self.dialog_edit_srv.open()
+        Clock.schedule_once(lambda dt: setattr(self.field_srv_name, 'focus', True), 0.3)
+
+    def save_server_config(self, index):
+        name = self.field_srv_name.get_value().strip()
+        local_ip = self.field_srv_local.text.strip()
+        ext_ip = self.field_srv_ext.text.strip()
+        pin = self.field_srv_pin.text.strip()
+        if not name:
+            self.notify('Le nom du restaurant est obligatoire', 'error')
+            return
+        new_srv = {'name': name, 'local_ip': local_ip, 'ext_ip': ext_ip, 'pin': pin}
+        data = self.store.get('servers_config')
+        servers = data.get('list', [])
+        if index is None:
+            servers.append(new_srv)
+            idx_to_select = len(servers) - 1
+        else:
+            servers[index] = new_srv
+            idx_to_select = data.get('active_index', 0)
+        self.store.put('servers_config', list=servers, active_index=idx_to_select)
+        self.apply_active_server()
+        self.notify('Configuration sauvegardée', 'success')
+        self.dialog_edit_srv.dismiss()
+        self.open_ip_settings()
+
+    def delete_server_config(self, index):
+        data = self.store.get('servers_config')
+        servers = data.get('list', [])
+        active_idx = data.get('active_index', 0)
+        if len(servers) <= 1:
+            self.notify('Impossible de supprimer le seul restaurant', 'error')
+            return
+        del servers[index]
+        if active_idx == index:
+            active_idx = 0
+        elif active_idx > index:
+            active_idx -= 1
+        self.store.put('servers_config', list=servers, active_index=active_idx)
+        self.apply_active_server()
+        self.notify('Restaurant supprimé', 'success')
+        self.dialog_edit_srv.dismiss()
+        self.open_ip_settings()
 
     def perform_logout(self, dialog):
         dialog.dismiss()
@@ -1963,6 +2145,7 @@ class RestaurantApp(MDApp):
         self.stop_admin_auto_refresh()
         if self.store.exists('session'):
             self.store.put('session', logged_in=False, username=self.current_user_name, role='')
+        self.apply_active_server()
         self.screen_manager.current = 'login'
         self.password_field.text = ''
         self.notify('Déconnecté avec succès', 'info')
