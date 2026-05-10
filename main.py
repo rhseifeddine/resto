@@ -499,7 +499,17 @@ class TableCard(MDCard):
             text_color = (0.1, 0.1, 0.1, 1)
         else:
             text_color = (1, 1, 1, 1)
-        self.lbl_name.text_color = text_color
+        self.header_box.clear_widgets()
+        table_name = self.app.fix_text(table['name'])
+        self.lbl_name = MDLabel(text=table_name, halign='center', valign='center', bold=True, theme_text_color='Custom', text_color=text_color, font_name='ArabicFont', max_lines=2, shorten=True, shorten_from='right', size_hint_x=1)
+        self.lbl_name.bind(size=lambda s, w: setattr(s, 'text_size', (w[0], None)))
+        if getattr(self.app, 'order_tracking_enabled', False) and status == 'occupied':
+            btn_megaphone = MDIconButton(icon='bullhorn', theme_text_color='Custom', text_color=(1, 0.85, 0, 1), pos_hint={'center_y': 0.5}, icon_size='22sp', size_hint_x=None, width=dp(40))
+            btn_megaphone.bind(on_press=lambda x: self.app.mark_table_ready(self.table['id'], self.table['name']))
+            self.header_box.add_widget(self.lbl_name)
+            self.header_box.add_widget(btn_megaphone)
+        else:
+            self.header_box.add_widget(self.lbl_name)
         self.body_box.clear_widgets()
         if status == 'occupied' and 0 not in occupied_seats and occupied_seats and (not is_calling):
             try:
@@ -1201,6 +1211,8 @@ class RestaurantApp(MDApp):
         Config.set('kivy', 'log_level', 'error')
         Config.write()
         Builder.load_string(KV_BUILDER)
+        self.order_tracking_enabled = False
+        self.dialog_qs = None
         self.title = 'MagPro Restaurant'
         self.theme_cls.primary_palette = 'Teal'
         self.theme_cls.primary_hue = '700'
@@ -1891,6 +1903,83 @@ class RestaurantApp(MDApp):
             from kivy.clock import Clock
             Clock.schedule_once(lambda dt: self.ws_manager.connect(), 1)
             Clock.schedule_once(lambda dt: self._ping_local(), 0.5)
+            Clock.schedule_once(lambda dt: self.fetch_tracking_config(), 1.0)
+
+    def fetch_tracking_config(self):
+
+        def on_success(req, res):
+            self._tracking_config_fetched = True
+            new_state = res.get('order_tracking_enabled', False)
+            if getattr(self, 'order_tracking_enabled', None) != new_state:
+                self.order_tracking_enabled = new_state
+                current_items = list(self.toolbar_tables.right_action_items)
+                if not self.order_tracking_enabled:
+                    new_items = [item for item in current_items if item[0] != 'clipboard-list-outline']
+                else:
+                    exists = any((item[0] == 'clipboard-list-outline' for item in current_items))
+                    if not exists:
+                        new_items = [['clipboard-list-outline', lambda x: self.open_quick_sales_dialog()]] + current_items
+                    else:
+                        new_items = current_items
+                self.toolbar_tables.right_action_items = new_items
+                for widget in self.table_widgets.values():
+                    widget.update_state(widget.table)
+
+        def on_error(req, error):
+            if not getattr(self, '_tracking_config_fetched', False):
+                self.order_tracking_enabled = False
+        UrlRequest(f'{self.api_base}/api/tracking_config', on_success=on_success, on_error=on_error, on_failure=on_error, timeout=3)
+
+    def mark_table_ready(self, table_id, table_name):
+        data = json.dumps({'table_id': table_id})
+
+        def on_success(req, res):
+            if res.get('status') == 'success':
+                self.notify(f'Appel lancé pour la table: {table_name}', 'success')
+                self.fetch_tables(manual=False)
+            else:
+                self.notify("Erreur lors de l'appel", 'error')
+        UrlRequest(f'{self.api_base}/api/set_order_ready', req_body=data, req_headers={'Content-type': 'application/json'}, method='POST', on_success=on_success, on_error=lambda r, e: self.notify('Erreur serveur', 'error'), timeout=5)
+
+    def mark_quick_sale_ready(self, trans_id, desc):
+        data = json.dumps({'transaction_id': trans_id})
+
+        def on_success(req, res):
+            if res.get('status') == 'success':
+                ticket_num = res.get('ticket_num', desc)
+                self.notify(f'Appel lancé pour le Ticket #{ticket_num}', 'success')
+                if self.dialog_qs:
+                    self.dialog_qs.dismiss()
+            else:
+                self.notify("Erreur lors de l'appel", 'error')
+        UrlRequest(f'{self.api_base}/api/set_order_ready', req_body=data, req_headers={'Content-type': 'application/json'}, method='POST', on_success=on_success, on_error=lambda r, e: self.notify('Erreur serveur', 'error'), timeout=5)
+
+    def open_quick_sales_dialog(self):
+        self.notify('Recherche des commandes...', 'info')
+        UrlRequest(f'{self.api_base}/api/quick_sales_pending', on_success=self._show_quick_sales_dialog, on_error=lambda r, e: self.notify('Erreur serveur', 'error'), timeout=5)
+
+    def _show_quick_sales_dialog(self, req, results):
+        content = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing=dp(10))
+        if not results:
+            content.add_widget(MDLabel(text='Aucune vente en préparation', halign='center', theme_text_color='Secondary', font_style='Subtitle1', size_hint_y=None, height=dp(50)))
+        else:
+            scroll = MDScrollView(size_hint_y=None, height=dp(300))
+            list_layout = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing=dp(5))
+            for r in results:
+                card = MDCard(orientation='horizontal', size_hint_y=None, height=dp(60), padding=dp(10), radius=[8], md_bg_color=(0.95, 0.95, 0.95, 1))
+                info_box = MDBoxLayout(orientation='vertical')
+                ticket_display = r.get('ticket_num', r['description'])
+                info_box.add_widget(MDLabel(text=f'Commande N° {ticket_display}', font_style='Subtitle1', bold=True, theme_text_color='Primary'))
+                info_box.add_widget(MDLabel(text=f"{r['time']} | {int(r['amount'])} DA", theme_text_color='Hint', font_style='Caption'))
+                btn_call = MDFillRoundFlatIconButton(text='PRÊT', icon='bell-ring', md_bg_color=(0.15, 0.68, 0.37, 1), text_color=(1, 1, 1, 1), icon_color=(1, 1, 1, 1), pos_hint={'center_y': 0.5})
+                btn_call.bind(on_release=lambda x, tid=r['id'], desc=r['description']: self.mark_quick_sale_ready(tid, desc))
+                card.add_widget(info_box)
+                card.add_widget(btn_call)
+                list_layout.add_widget(card)
+            scroll.add_widget(list_layout)
+            content.add_widget(scroll)
+        self.dialog_qs = MDDialog(title='Ventes Rapides', type='custom', content_cls=content, buttons=[MDFlatButton(text='FERMER', on_release=lambda x: self.dialog_qs.dismiss())])
+        self.dialog_qs.open()
 
     def open_restaurant_selector(self, instance=None):
         data = self.store.get('servers_config')
@@ -2167,6 +2256,8 @@ class RestaurantApp(MDApp):
         if self.request_pending:
             return
         self.request_pending = True
+        if not getattr(self, '_tracking_config_fetched', False):
+            self.fetch_tracking_config()
         if self.cache_store.exists('tables'):
             self.update_tables(None, self.cache_store.get('tables')['data'])
 
