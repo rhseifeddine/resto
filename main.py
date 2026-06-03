@@ -800,63 +800,64 @@ class RestaurantApp(MDApp):
     def _download_worker(self, report_type):
         import requests
         import os
+        import re
         from kivy.utils import platform
         from datetime import datetime
-        
+
+        folder_name = 'MagPro'
+        if self.store and self.store.exists('servers_config'):
+            try:
+                srv_data = self.store.get('servers_config')
+                srv_list = srv_data.get('list', [])
+                active_idx = srv_data.get('active_index', 0)
+                if srv_list and len(srv_list) > active_idx:
+                    raw_name = srv_list[active_idx].get('name', '').strip()
+                    if raw_name:
+                        safe_name = re.sub('[\\\\/*?:"<>|]', '_', raw_name)
+                        folder_name = safe_name
+            except Exception:
+                pass
         url = f'{self.api_base}/api/download_summary_report?type={report_type}&start_date={self.admin_start_date}&end_date={self.admin_end_date}'
         try:
             if platform == 'android':
                 from jnius import autoclass
                 Environment = autoclass('android.os.Environment')
-                
                 public_docs = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS).getAbsolutePath()
-                downloads_dir = os.path.join(public_docs, 'magpro')
-                
+                downloads_dir = os.path.join(public_docs, folder_name)
                 try:
                     if not os.path.exists(downloads_dir):
                         os.makedirs(downloads_dir, exist_ok=True)
                 except Exception:
                     downloads_dir = public_docs
-
             elif platform == 'win':
-                downloads_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'magpro')
+                downloads_dir = os.path.join(os.path.expanduser('~'), 'Documents', folder_name)
                 if not os.path.exists(downloads_dir):
                     os.makedirs(downloads_dir, exist_ok=True)
             else:
                 downloads_dir = os.path.expanduser('~')
-                
-            names_map = {
-                'net_caisse': 'Caisse_Totale',
-                'ventes_payees': 'Ventes_Payees',
-                'dettes_ventes': 'Dettes_Ventes'
-            }
+
+            names_map = {'net_caisse': 'Caisse_Totale', 'ventes_payees': 'Ventes_Payees', 'dettes_ventes': 'Dettes_Ventes'}
             clean_name = names_map.get(report_type, 'Rapport_Generique')
-            
             try:
                 d_start = self.admin_start_date.split('-')
                 d_end = self.admin_end_date.split('-')
-                str_start = f"{d_start[2]}-{d_start[1]}-{d_start[0]}"
-                str_end = f"{d_end[2]}-{d_end[1]}-{d_end[0]}"
-                
+                str_start = f'{d_start[2]}-{d_start[1]}-{d_start[0]}'
+                str_end = f'{d_end[2]}-{d_end[1]}-{d_end[0]}'
                 if str_start == str_end:
                     date_part = str_start
                 else:
-                    date_part = f"Du_{str_start}_au_{str_end}"
+                    date_part = f'Du_{str_start}_au_{str_end}'
             except Exception:
                 date_part = datetime.now().strftime('%d-%m-%Y')
-                
-            time_part = datetime.now().strftime('%Hh%M') 
-            
-            filename = f'MagPro_{clean_name}_{date_part}_{time_part}.pdf'        
+            time_part = datetime.now().strftime('%Hh%M')
+            filename = f'MagPro_{clean_name}_{date_part}_{time_part}.pdf'
             filepath = os.path.join(downloads_dir, filename)
-            
             headers = {}
             if self.store and self.store.exists('config'):
                 pin = self.store.get('config').get('server_pin', '')
                 if pin:
                     headers['X-Server-PIN'] = str(pin)
             response = requests.get(url, headers=headers, stream=True, timeout=20)
-            
             if response.status_code == 200:
                 content_type = response.headers.get('Content-Type', '')
                 if 'application/json' in content_type:
@@ -866,7 +867,6 @@ class RestaurantApp(MDApp):
                     except:
                         self._show_download_error('Aucune transaction trouvée.')
                     return
-                
                 with open(filepath, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
@@ -891,12 +891,11 @@ class RestaurantApp(MDApp):
     def _show_download_success(self, filepath):
         import os
         from kivy.utils import platform
-        
+        actual_folder_name = os.path.basename(os.path.dirname(filepath))
         if platform == 'android':
-            msg = f"Fichier sauvegardé dans:\nDocuments/magpro/\n{os.path.basename(filepath)}"
+            msg = f'Fichier sauvegardé dans:\nDocuments/{actual_folder_name}/\n{os.path.basename(filepath)}'
         else:
-            msg = f"Fichier sauvegardé dans:\nDocuments/magpro\n{os.path.basename(filepath)}"
-            
+            msg = f'Fichier sauvegardé dans:\nDocuments/{actual_folder_name}\n{os.path.basename(filepath)}'
         self.notify(msg, 'success')
 
     @mainthread
