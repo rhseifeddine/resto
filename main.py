@@ -801,27 +801,62 @@ class RestaurantApp(MDApp):
         import requests
         import os
         from kivy.utils import platform
+        from datetime import datetime
+        
         url = f'{self.api_base}/api/download_summary_report?type={report_type}&start_date={self.admin_start_date}&end_date={self.admin_end_date}'
         try:
             if platform == 'android':
                 from jnius import autoclass
-                PythonActivity = autoclass('org.kivy.android.PythonActivity')
                 Environment = autoclass('android.os.Environment')
-                context = PythonActivity.mActivity
-                downloads_dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS).getAbsolutePath()
+                
+                public_docs = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS).getAbsolutePath()
+                downloads_dir = os.path.join(public_docs, 'magpro')
+                
+                try:
+                    if not os.path.exists(downloads_dir):
+                        os.makedirs(downloads_dir, exist_ok=True)
+                except Exception:
+                    downloads_dir = public_docs
+
             elif platform == 'win':
-                downloads_dir = os.path.join(os.path.expanduser('~'), 'Downloads')
+                downloads_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'magpro')
+                if not os.path.exists(downloads_dir):
+                    os.makedirs(downloads_dir, exist_ok=True)
             else:
                 downloads_dir = os.path.expanduser('~')
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f'Rapport_{report_type}_{timestamp}.pdf'
+                
+            names_map = {
+                'net_caisse': 'Caisse_Totale',
+                'ventes_payees': 'Ventes_Payees',
+                'dettes_ventes': 'Dettes_Ventes'
+            }
+            clean_name = names_map.get(report_type, 'Rapport_Generique')
+            
+            try:
+                d_start = self.admin_start_date.split('-')
+                d_end = self.admin_end_date.split('-')
+                str_start = f"{d_start[2]}-{d_start[1]}-{d_start[0]}"
+                str_end = f"{d_end[2]}-{d_end[1]}-{d_end[0]}"
+                
+                if str_start == str_end:
+                    date_part = str_start
+                else:
+                    date_part = f"Du_{str_start}_au_{str_end}"
+            except Exception:
+                date_part = datetime.now().strftime('%d-%m-%Y')
+                
+            time_part = datetime.now().strftime('%Hh%M') 
+            
+            filename = f'MagPro_{clean_name}_{date_part}_{time_part}.pdf'        
             filepath = os.path.join(downloads_dir, filename)
+            
             headers = {}
             if self.store and self.store.exists('config'):
                 pin = self.store.get('config').get('server_pin', '')
                 if pin:
                     headers['X-Server-PIN'] = str(pin)
             response = requests.get(url, headers=headers, stream=True, timeout=20)
+            
             if response.status_code == 200:
                 content_type = response.headers.get('Content-Type', '')
                 if 'application/json' in content_type:
@@ -831,6 +866,7 @@ class RestaurantApp(MDApp):
                     except:
                         self._show_download_error('Aucune transaction trouvée.')
                     return
+                
                 with open(filepath, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
@@ -841,8 +877,8 @@ class RestaurantApp(MDApp):
             self._show_download_error('Erreur de connexion. Serveur introuvable ou déconnecté.')
         except requests.exceptions.Timeout:
             self._show_download_error("Délai d'attente dépassé. Vérifiez votre réseau.")
-        except Exception:
-            self._show_download_error('Échec du téléchargement. Veuillez vérifier votre connexion.')
+        except Exception as e:
+            self._show_download_error(f'Échec du téléchargement: {str(e)}')
 
     def _execute_direct_download(self, report_type):
         if hasattr(self, 'download_dialog') and getattr(self, 'download_dialog', None):
@@ -855,10 +891,12 @@ class RestaurantApp(MDApp):
     def _show_download_success(self, filepath):
         import os
         from kivy.utils import platform
+        
         if platform == 'android':
-            msg = f'Fichier sauvegardé dans:\nAndroid/data/org.magproresto/files/Download\n{os.path.basename(filepath)}'
+            msg = f"Fichier sauvegardé dans:\nDocuments/magpro/\n{os.path.basename(filepath)}"
         else:
-            msg = f'Fichier sauvegardé dans Downloads\n{os.path.basename(filepath)}'
+            msg = f"Fichier sauvegardé dans:\nDocuments/magpro\n{os.path.basename(filepath)}"
+            
         self.notify(msg, 'success')
 
     @mainthread
