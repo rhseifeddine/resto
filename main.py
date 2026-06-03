@@ -805,8 +805,10 @@ class RestaurantApp(MDApp):
         try:
             if platform == 'android':
                 from jnius import autoclass
+                PythonActivity = autoclass('org.kivy.android.PythonActivity')
                 Environment = autoclass('android.os.Environment')
-                downloads_dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).getAbsolutePath()
+                context = PythonActivity.mActivity
+                downloads_dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS).getAbsolutePath()
             elif platform == 'win':
                 downloads_dir = os.path.join(os.path.expanduser('~'), 'Downloads')
             else:
@@ -852,7 +854,12 @@ class RestaurantApp(MDApp):
     @mainthread
     def _show_download_success(self, filepath):
         import os
-        self.notify(f'Fichier sauvegardé dans Downloads\n{os.path.basename(filepath)}', 'success')
+        from kivy.utils import platform
+        if platform == 'android':
+            msg = f'Fichier sauvegardé dans:\nAndroid/data/org.magproresto/files/Download\n{os.path.basename(filepath)}'
+        else:
+            msg = f'Fichier sauvegardé dans Downloads\n{os.path.basename(filepath)}'
+        self.notify(msg, 'success')
 
     @mainthread
     def _show_download_error(self, err_msg):
@@ -1159,6 +1166,13 @@ class RestaurantApp(MDApp):
     def on_start(self):
         import gc
         gc.set_threshold(1000, 15, 15)
+        from kivy.utils import platform
+        if platform == 'android':
+            try:
+                from android.permissions import request_permissions, Permission
+                request_permissions([Permission.WRITE_EXTERNAL_STORAGE, Permission.READ_EXTERNAL_STORAGE])
+            except Exception as e:
+                print(f'Permissions error: {e}')
         from kivy.clock import Clock
         Clock.schedule_once(self._deferred_start, 0.5)
 
@@ -2179,6 +2193,7 @@ class RestaurantApp(MDApp):
         import re
         from kivy.clock import Clock
         from kivy.animation import Animation
+        from kivymd.uix.scrollview import MDScrollView
         is_new = index is None
         srv_name = ''
         srv_local = '192.168.1.100'
@@ -2192,9 +2207,8 @@ class RestaurantApp(MDApp):
             srv_local = srv.get('local_ip', '192.168.1.100')
             srv_ext = srv.get('ext_ip', '')
             srv_pin = srv.get('pin', '')
-        content = MDBoxLayout(orientation='vertical', spacing=dp(20), size_hint_y=None, adaptive_height=True, padding=[0, dp(5), 0, 0])
-        spacer = MDBoxLayout(size_hint_y=None, height=dp(30))
-        content.add_widget(spacer)
+        scroll = MDScrollView(size_hint_y=None, height=dp(280))
+        content = MDBoxLayout(orientation='vertical', spacing=dp(10), size_hint_y=None, adaptive_height=True, padding=[0, dp(10), 0, dp(10)])
         self.field_srv_name = SmartTextField(text=srv_name, hint_text='Nom du restaurant', mode='rectangle', icon_right='store')
         self.field_srv_local = MDTextField(text=srv_local, hint_text='IP Locale (Wifi)', mode='rectangle', icon_right='router-wireless')
         self.field_srv_ext = MDTextField(text=srv_ext, hint_text='IP Externe (Internet / Cloudflare)', mode='rectangle', icon_right='web')
@@ -2209,6 +2223,7 @@ class RestaurantApp(MDApp):
         content.add_widget(self.field_srv_local)
         content.add_widget(self.field_srv_ext)
         content.add_widget(self.pin_container)
+        scroll.add_widget(content)
 
         def check_ext_ip(instance, text):
             has_letters = bool(text.strip() and re.search('[a-zA-Z]', text))
@@ -2227,7 +2242,7 @@ class RestaurantApp(MDApp):
             buttons.append(MDRaisedButton(text='SUPPRIMER', md_bg_color=(0.8, 0.2, 0.2, 1), on_release=lambda x: self.delete_server_config(index)))
         buttons.append(MDRaisedButton(text='ENREGISTRER', md_bg_color=(0, 0.6, 0.2, 1), on_release=lambda x: self.save_server_config(index)))
         title_text = 'Nouveau Restaurant' if is_new else f'Détails : {self.fix_text(srv_name)}'
-        self.dialog_edit_srv = MDDialog(title=title_text, type='custom', content_cls=content, radius=[15, 15, 15, 15], buttons=buttons)
+        self.dialog_edit_srv = MDDialog(title=title_text, type='custom', content_cls=scroll, radius=[15, 15, 15, 15], buttons=buttons)
         self.dialog_edit_srv.open()
         Clock.schedule_once(lambda dt: setattr(self.field_srv_name, 'focus', True), 0.3)
 
