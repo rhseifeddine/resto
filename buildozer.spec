@@ -4,8 +4,8 @@ package.name = magproresto
 package.domain = org.magproresto
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json,ttf
-version = 7.6.0
-requirements = python3,kivy,kivymd,websocket-client,requests,urllib3,pillow,arabic-reshaper,python-bidi==0.4.2,six,future,android,jnius
+version = 7.7.0
+requirements = python3,kivy,kivymd,websocket-client,requests,urllib3,openssl,pillow,arabic-reshaper,python-bidi==0.4.2,six,future,android,jnius
 icon.filename = apk_icon.png
 orientation = portrait
 fullscreen = 0
