@@ -110,7 +110,9 @@ class CustomUrlRequest(OriginalUrlRequest):
             pin = app.store.get('config').get('server_pin', '')
             if pin:
                 headers['X-Server-PIN'] = str(pin)
+        headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         kwargs['req_headers'] = headers
+        kwargs['verify'] = False
         super().__init__(url, **kwargs)
 
 UrlRequest = CustomUrlRequest
@@ -269,8 +271,9 @@ class WebSocketManager:
             from kivymd.app import MDApp
             import time
             import re
+            import ssl
             try:
-                websocket.setdefaulttimeout(10)
+                websocket.setdefaulttimeout(15)
             except:
                 pass
             while self.should_reconnect:
@@ -286,9 +289,11 @@ class WebSocketManager:
                     pin = app.store.get('config').get('server_pin', '')
                     if pin:
                         ws_header.append(f'X-Server-PIN: {pin}')
+                ws_header.append('User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
                 try:
+                    sslopt = {'cert_reqs': ssl.CERT_NONE, 'check_hostname': False}
                     self.ws = websocket.WebSocketApp(ws_url, header=ws_header, on_open=self._on_open, on_message=self._on_message, on_error=self._on_error, on_close=self._on_close)
-                    self.ws.run_forever(ping_interval=20, ping_timeout=10)
+                    self.ws.run_forever(ping_interval=20, ping_timeout=10, sslopt=sslopt)
                 except Exception as e:
                     logging.error(f'Erreur critique de connexion WS: {e}')
                 if self.should_reconnect:
@@ -764,14 +769,14 @@ class RestaurantApp(MDApp):
                 self.admin_screen.ids.lbl_debts_c.text = format_dz(data.get('customer_debts', 0))
                 self.admin_screen.ids.lbl_debts_s.text = format_dz(data.get('supplier_debts', 0))
                 if show_notification:
-                    self.notify('Données mises à jour', 'success')
+                    self.notify('Données mises à jour avec succès', 'success')
             elif show_notification:
                 self.notify('Erreur serveur', 'error')
 
         def on_error(req, error):
             if show_notification:
-                self.notify('Erreur de connexion', 'error')
-        UrlRequest(url, method='GET', on_success=on_success, on_failure=on_error, on_error=on_error, timeout=10)
+                self.notify('Réseau lent, tentative en cours...', 'warning')
+        UrlRequest(url, method='GET', on_success=on_success, on_failure=on_error, on_error=on_error, timeout=20)
 
     def download_report_mobile(self, report_type):
         if not getattr(self, 'admin_start_date', None) or not getattr(self, 'admin_end_date', None):
@@ -803,7 +808,6 @@ class RestaurantApp(MDApp):
         import re
         from kivy.utils import platform
         from datetime import datetime
-
         folder_name = 'MagPro'
         if self.store and self.store.exists('servers_config'):
             try:
@@ -835,7 +839,6 @@ class RestaurantApp(MDApp):
                     os.makedirs(downloads_dir, exist_ok=True)
             else:
                 downloads_dir = os.path.expanduser('~')
-
             names_map = {'net_caisse': 'Caisse_Totale', 'ventes_payees': 'Ventes_Payees', 'dettes_ventes': 'Dettes_Ventes'}
             clean_name = names_map.get(report_type, 'Rapport_Generique')
             try:
@@ -1245,8 +1248,11 @@ class RestaurantApp(MDApp):
             pass
 
     def check_server_heartbeat(self, dt=None):
-        if self.stop_heartbeat:
+        if getattr(self, 'stop_heartbeat', False):
             return False
+        if getattr(self, 'ping_in_progress', False):
+            return
+        self.ping_in_progress = True
         self._ping_local()
 
     def _ping_local(self):
@@ -1274,34 +1280,46 @@ class RestaurantApp(MDApp):
         import time
         import requests
         from kivy.clock import Clock
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         if not hasattr(self, 'ping_session'):
             self.ping_session = requests.Session()
-            self.ping_session.headers.update({'User-Agent': 'MagProMobile-Resto/1.0'})
+            self.ping_session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Connection': 'keep-alive'})
             if self.store and self.store.exists('config'):
                 pin = self.store.get('config').get('server_pin', '')
                 if pin:
                     self.ping_session.headers.update({'X-Server-PIN': str(pin)})
         start_time = time.time()
         try:
-            res = self.ping_session.get(url, timeout=3)
+            res = self.ping_session.get(url, timeout=4.0, verify=False)
             if res.status_code == 200:
                 ping_val = int((time.time() - start_time) * 1000)
+                self.failed_pings_count = 0
                 self._finalize_ping_ui(True, ping_val, confirmed_ip)
             elif res.status_code == 403:
-                Clock.schedule_once(lambda dt: self.notify('Code PIN du Serveur Incorrect!', 'error'), 0)
+                Clock.schedule_once(lambda dt: self.notify('Code PIN du serveur incorrect!', 'error'), 0)
                 self._finalize_ping_ui(False, 0, None)
             elif is_local:
                 self._ping_external()
             else:
-                self._finalize_ping_ui(False, 0, None)
+                self._process_ping_fail()
         except Exception:
             if is_local:
                 self._ping_external()
             else:
-                self._finalize_ping_ui(False, 0, None)
+                self._process_ping_fail()
+
+    def _process_ping_fail(self):
+        count = getattr(self, 'failed_pings_count', 0) + 1
+        self.failed_pings_count = count
+        if count >= 2:
+            self._finalize_ping_ui(False, 0, None)
+        else:
+            self.ping_in_progress = False
 
     @mainthread
     def _finalize_ping_ui(self, success, ping_val, confirmed_ip):
+        self.ping_in_progress = False
         self.is_server_reachable = success
         if success and confirmed_ip:
             if getattr(self, 'server_ip', '') != confirmed_ip or getattr(self, 'active_server_ip', '') != confirmed_ip:
@@ -1411,7 +1429,7 @@ class RestaurantApp(MDApp):
         card_login.add_widget(MDBoxLayout(size_hint_y=None, height=dp(10)))
         card_login.add_widget(btn_login)
         background_layout.add_widget(card_login)
-        footer = MDLabel(text='MagPro Resto v7.6.0 © 2026', halign='center', pos_hint={'bottom': 1, 'center_x': 0.5}, theme_text_color='Hint', font_style='Caption', size_hint_y=None, height=dp(30))
+        footer = MDLabel(text='MagPro Resto v7.7.0 © 2026', halign='center', pos_hint={'bottom': 1, 'center_x': 0.5}, theme_text_color='Hint', font_style='Caption', size_hint_y=None, height=dp(30))
         background_layout.add_widget(footer)
         screen_login.add_widget(background_layout)
         self.screen_manager.add_widget(screen_login)
@@ -2115,22 +2133,137 @@ class RestaurantApp(MDApp):
     def open_restaurant_selector(self, instance=None):
         data = self.store.get('servers_config')
         servers = data.get('list', [])
+        active_index = data.get('active_index', 0)
         if len(servers) <= 1:
             return
-        content = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing=dp(5))
-        scroll = MDScrollView(size_hint_y=None, height=dp(250))
-        list_layout = MDBoxLayout(orientation='vertical', adaptive_height=True)
-        for i, srv in enumerate(servers):
-            is_active = i == data.get('active_index', 0)
-            card = MDCard(orientation='vertical', size_hint_y=None, height=dp(55), elevation=0, md_bg_color=(0, 0, 0, 0), ripple_behavior=True, on_release=lambda x, idx=i: self.set_active_restaurant(idx))
-            lbl = MDLabel(text=self.fix_text(srv.get('name', 'Inconnu')), halign='center', valign='center', font_name='ArabicFont', font_size='20sp', bold=is_active, theme_text_color='Custom', text_color=(0.1, 0.4, 0.7, 1) if is_active else (0.3, 0.3, 0.3, 1))
-            card.add_widget(lbl)
+        from kivy.metrics import dp
+        from kivymd.uix.boxlayout import MDBoxLayout
+        from kivymd.uix.scrollview import MDScrollView
+        from kivymd.uix.card import MDCard
+        from kivymd.uix.label import MDIcon, MDLabel
+        from kivymd.uix.button import MDFlatButton
+        from kivymd.uix.dialog import MDDialog
+        content = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing=dp(10))
+        scroll = MDScrollView(size_hint_y=None, height=dp(450))
+        list_layout = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing=dp(8), padding=[dp(5), dp(5), dp(5), dp(5)])
+        self.store_status_icons = {}
+        self.store_status_labels = {}
+        self.store_online_flags = {}
+        indexed_servers = list(enumerate(servers))
+        indexed_servers.sort(key=lambda item: str(item[1].get('name', '')).lower())
+        for original_idx, srv in indexed_servers:
+            is_active = original_idx == active_index
+            display_name = self.fix_text(srv.get('name', 'Inconnu'))
+            bg_color = (0.9, 0.95, 1, 1) if is_active else (0.98, 0.98, 0.98, 1)
+            card = MDCard(orientation='horizontal', padding=[dp(12), dp(5), dp(15), dp(5)], spacing=dp(15), size_hint_y=None, height=dp(60), radius=[12], elevation=1, md_bg_color=bg_color, ripple_behavior=True)
+            card.bind(on_release=lambda x, idx=original_idx: self._on_store_selected(idx))
+            icon_status = MDIcon(icon='wifi-sync', theme_text_color='Hint', font_size='28sp', pos_hint={'center_y': 0.5})
+            self.store_status_icons[original_idx] = icon_status
+            self.store_online_flags[original_idx] = False
+            card.add_widget(icon_status)
+            txt_box = MDBoxLayout(orientation='vertical', pos_hint={'center_y': 0.5}, spacing=dp(2))
+            lbl_name = MDLabel(text=display_name, bold=True, font_style='Subtitle1', theme_text_color='Primary', font_name='ArabicFont')
+            lbl_status = MDLabel(text='Vérification...', font_style='Caption', theme_text_color='Hint', font_name='ArabicFont')
+            self.store_status_labels[original_idx] = lbl_status
+            txt_box.add_widget(lbl_name)
+            txt_box.add_widget(lbl_status)
+            card.add_widget(txt_box)
+            if is_active:
+                card.add_widget(MDIcon(icon='check-circle', theme_text_color='Custom', text_color=(0, 0.5, 0.8, 1), font_size='24sp', pos_hint={'center_y': 0.5}))
             list_layout.add_widget(card)
-            list_layout.add_widget(MDSeparator(height=dp(1)))
         scroll.add_widget(list_layout)
         content.add_widget(scroll)
-        self.dialog_select_resto = MDDialog(title='Choisir un restaurant', type='custom', content_cls=content, radius=[15, 15, 15, 15], buttons=[MDFlatButton(text='ANNULER', theme_text_color='Error', on_release=lambda x: self.dialog_select_resto.dismiss())])
+        self.dialog_select_resto = MDDialog(title='Choisir un restaurant', type='custom', content_cls=content, radius=[15, 15, 15, 15], buttons=[MDFlatButton(text='ANNULER', theme_text_color='Error', on_release=lambda x: self.dialog_select_resto.dismiss())], size_hint=(0.95, None))
         self.dialog_select_resto.open()
+        import threading
+        threading.Thread(target=self._check_stores_connection_bg, args=(servers,), daemon=True).start()
+
+    def _ping_store_worker(self, item):
+        import requests
+        import re
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        index, srv = item
+        local_ip = str(srv.get('local_ip', '')).strip()
+        ext_ip = str(srv.get('ext_ip', '')).strip()
+        pin = str(srv.get('pin', '')).strip()
+        urls_to_test = []
+        for ip in [ext_ip, local_ip]:
+            if not ip:
+                continue
+            if 'http' in ip:
+                urls_to_test.append(f"{ip.rstrip('/')}/api/ping")
+            elif re.search('[a-zA-Z]', ip):
+                urls_to_test.append(f"https://{ip.rstrip('/')}/api/ping")
+                urls_to_test.append(f"http://{ip.rstrip('/')}/api/ping")
+            elif ':' in ip:
+                urls_to_test.append(f"http://{ip.rstrip('/')}/api/ping")
+            else:
+                urls_to_test.append(f"http://{ip.rstrip('/')}:{DEFAULT_PORT}/api/ping")
+        is_online = False
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        if pin:
+            headers['X-Server-PIN'] = pin
+        for test_url in urls_to_test:
+            try:
+                res = requests.get(test_url, headers=headers, timeout=1.5, verify=False)
+                if res.status_code == 200:
+                    is_online = True
+                    break
+            except:
+                continue
+        return (index, is_online)
+
+    def _check_stores_connection_bg(self, servers):
+        import concurrent.futures
+        from kivy.clock import Clock
+        indexed_servers = list(enumerate(servers))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(self._ping_store_worker, item): item for item in indexed_servers}
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    index, is_online = future.result()
+                    Clock.schedule_once(lambda dt, idx=index, online=is_online: self._update_store_status_ui(idx, online), 0)
+                except Exception as e:
+                    pass
+
+    @mainthread
+    def _update_store_status_ui(self, index, is_online):
+        if not hasattr(self, 'dialog_select_resto') or not self.dialog_select_resto:
+            return
+        self.store_online_flags[index] = is_online
+        icon_widget = self.store_status_icons.get(index)
+        lbl_widget = self.store_status_labels.get(index)
+        if icon_widget and lbl_widget:
+            if is_online:
+                icon_widget.icon = 'wifi'
+                icon_widget.text_color = (0, 0.7, 0, 1)
+                icon_widget.theme_text_color = 'Custom'
+                lbl_widget.text = 'En ligne'
+                lbl_widget.theme_text_color = 'Custom'
+                lbl_widget.text_color = (0, 0.7, 0, 1)
+            else:
+                icon_widget.icon = 'wifi-off'
+                icon_widget.text_color = (0.8, 0, 0, 1)
+                icon_widget.theme_text_color = 'Custom'
+                lbl_widget.text = 'Hors ligne'
+                lbl_widget.theme_text_color = 'Error'
+
+    def _on_store_selected(self, index):
+        data = self.store.get('servers_config')
+        active_index = data.get('active_index', 0)
+        if index == active_index:
+            if hasattr(self, 'dialog_select_resto') and self.dialog_select_resto:
+                self.dialog_select_resto.dismiss()
+            return
+        is_online = self.store_online_flags.get(index, False)
+        self.set_active_restaurant(index)
+        if hasattr(self, 'dialog_select_resto') and self.dialog_select_resto:
+            self.dialog_select_resto.dismiss()
+        if is_online:
+            self.notify('Restaurant sélectionné avec succès', 'success')
+        else:
+            self.notify('Attention : Vous êtes entré en mode HORS LIGNE.', 'warning')
 
     def set_active_restaurant(self, index):
         data = self.store.get('servers_config')
@@ -2138,11 +2271,18 @@ class RestaurantApp(MDApp):
         self.apply_active_server()
         if hasattr(self, 'dialog_select_resto') and self.dialog_select_resto:
             self.dialog_select_resto.dismiss()
-        self.notify('Restaurant sélectionné avec succès', 'success')
 
     def open_ip_settings(self, instance=None):
         import webbrowser
         from kivy.core.clipboard import Clipboard
+        from kivymd.uix.button import MDFillRoundFlatIconButton
+        from kivymd.uix.card import MDCard
+        from kivymd.uix.label import MDLabel, MDIcon
+        from kivymd.uix.boxlayout import MDBoxLayout
+        from kivymd.uix.scrollview import MDScrollView
+        from kivymd.uix.dialog import MDDialog
+        from kivymd.uix.button import MDFlatButton
+        from kivy.metrics import dp
         if hasattr(self, 'dialog_ip') and getattr(self, 'dialog_ip', None):
             self.dialog_ip.dismiss()
         is_admin = False
@@ -2203,9 +2343,11 @@ class RestaurantApp(MDApp):
             scroll_height = max(scroll_height, dp(70))
             scroll = MDScrollView(size_hint_y=None, height=scroll_height)
             list_layout = MDBoxLayout(orientation='vertical', adaptive_height=True, spacing=dp(8), padding=[dp(2), dp(2), dp(2), dp(10)])
-            for i, srv in enumerate(servers):
-                is_active = i == active_idx
-                card = MDCard(orientation='horizontal', size_hint_y=None, height=dp(60), padding=[dp(15), dp(5), dp(15), dp(5)], spacing=dp(15), radius=[12, 12, 12, 12], md_bg_color=(0.9, 0.97, 0.9, 1) if is_active else (1, 1, 1, 1), elevation=1, ripple_behavior=True, on_release=lambda x, idx=i: self.open_edit_server_dialog(idx))
+            indexed_servers_settings = list(enumerate(servers))
+            indexed_servers_settings.sort(key=lambda item: str(item[1].get('name', '')).lower())
+            for original_idx, srv in indexed_servers_settings:
+                is_active = original_idx == active_idx
+                card = MDCard(orientation='horizontal', size_hint_y=None, height=dp(60), padding=[dp(15), dp(5), dp(15), dp(5)], spacing=dp(15), radius=[12, 12, 12, 12], md_bg_color=(0.9, 0.97, 0.9, 1) if is_active else (1, 1, 1, 1), elevation=1, ripple_behavior=True, on_release=lambda x, idx=original_idx: self.open_edit_server_dialog(idx))
                 icon_name = 'check-circle' if is_active else 'store-outline'
                 icon_color = (0, 0.6, 0.2, 1) if is_active else (0.5, 0.5, 0.5, 1)
                 card.add_widget(MDIcon(icon=icon_name, theme_text_color='Custom', text_color=icon_color, font_size='26sp', pos_hint={'center_y': 0.5}))
