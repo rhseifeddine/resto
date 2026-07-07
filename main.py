@@ -119,6 +119,10 @@ UrlRequest = CustomUrlRequest
 
 class NoMenuTextField(MDTextField):
 
+    def __init__(self, **kwargs):
+        kwargs['keyboard_suggestions'] = False
+        super().__init__(**kwargs)
+
     def _show_cut_copy_paste(self, pos, selection, mode=None):
         pass
 
@@ -128,6 +132,7 @@ class NoMenuTextField(MDTextField):
 class SmartTextField(MDTextField):
 
     def __init__(self, **kwargs):
+        kwargs['keyboard_suggestions'] = False
         self._raw_text = kwargs.get('text', '')
         self.base_direction = 'ltr'
         self.halign = 'left'
@@ -145,10 +150,11 @@ class SmartTextField(MDTextField):
         self._update_display()
 
     def do_backspace(self, from_undo=False, mode='bkspc'):
-        if not self._raw_text:
-            return
-        self._raw_text = self._raw_text[:-1]
-        self._update_display()
+        if len(self._raw_text) > 0:
+            self._raw_text = self._raw_text[:-1]
+            self._update_display()
+        else:
+            super().do_backspace(from_undo=from_undo, mode=mode)
 
     def _update_display(self):
         reshaped = self._input_reshaper.reshape(self._raw_text)
@@ -203,6 +209,12 @@ class ProductRecycleItem(RecycleDataViewBehavior, ButtonBehavior, MDBoxLayout):
         self.product_data = data.get('raw_data')
         return super().refresh_view_attrs(rv, index, data)
 
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            super().on_touch_down(touch)
+            return True
+        return super().on_touch_down(touch)
+
     def on_release(self):
         app = MDApp.get_running_app()
         if self.is_exhausted:
@@ -213,6 +225,12 @@ class ProductRecycleItem(RecycleDataViewBehavior, ButtonBehavior, MDBoxLayout):
 
 class ProductRecycleView(RecycleView):
     loading_lock = False
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        from kivy.metrics import dp
+        self.scroll_distance = dp(20)
+        self.scroll_timeout = 250
 
     def on_scroll_y(self, instance, value):
         if value <= 0.2 and (not self.loading_lock) and (not MDApp.get_running_app().is_loading_more):
@@ -1437,6 +1455,18 @@ class RestaurantApp(MDApp):
         layout = MDBoxLayout(orientation='vertical')
         self.toolbar_tables = MDTopAppBar(title='Tables', right_action_items=[['cloud-sync-outline', lambda x: self.open_pending_orders_dialog()], ['refresh', lambda x: self.fetch_tables(manual=True)], ['logout', lambda x: self.confirm_logout()]], elevation=2)
         layout.add_widget(self.toolbar_tables)
+        vr_box = MDBoxLayout(size_hint_y=None, height=dp(80), padding=[dp(15), dp(15), dp(15), dp(10)])
+        btn_vr = MDCard(ripple_behavior=True, on_release=self.open_quick_sale, md_bg_color=(0.95, 0.45, 0.15, 1), radius=[12, 12, 12, 12], elevation=3, size_hint_x=1, size_hint_y=None, height=dp(55))
+        float_box = MDFloatLayout()
+        inner_box = MDBoxLayout(orientation='horizontal', size_hint=(None, None), adaptive_size=True, spacing=dp(10), pos_hint={'center_x': 0.5, 'center_y': 0.5})
+        vr_icon = MDIcon(icon='lightning-bolt', theme_text_color='Custom', text_color=(1, 1, 1, 1), font_size='28sp', pos_hint={'center_y': 0.5})
+        vr_label = MDLabel(text='Vente Rapide', theme_text_color='Custom', text_color=(1, 1, 1, 1), font_size='20sp', bold=True, pos_hint={'center_y': 0.5}, adaptive_size=True)
+        inner_box.add_widget(vr_icon)
+        inner_box.add_widget(vr_label)
+        float_box.add_widget(inner_box)
+        btn_vr.add_widget(float_box)
+        vr_box.add_widget(btn_vr)
+        layout.add_widget(vr_box)
         self.scroll_tables = MDScrollView()
         self.grid_tables = MDGridLayout(cols=2, padding=dp(15), spacing=dp(15), size_hint_y=None, adaptive_height=True)
         self.scroll_tables.add_widget(self.grid_tables)
@@ -1820,6 +1850,9 @@ class RestaurantApp(MDApp):
     def send_reminder(self, instance):
         if self.is_offline_mode:
             self.notify("Impossible d'envoyer un rappel en mode Hors Ligne", 'error')
+            return
+        if not self.current_table:
+            self.notify('Rappel non disponible pour Vente Rapide', 'warning')
             return
         data = {'table_id': self.current_table['id'], 'seat_number': self.current_seat, 'user_name': self.current_user_name}
         self.notify('Envoi du rappel en cours...', 'info')
@@ -2557,7 +2590,7 @@ class RestaurantApp(MDApp):
         try:
             local_updates = {}
             for key in self.offline_store.keys():
-                if key.startswith('offline_'):
+                if key.startswith('offline_') and (not key.startswith('offline_vr_')):
                     try:
                         parts = key.split('_')
                         if len(parts) >= 3:
@@ -2650,17 +2683,20 @@ class RestaurantApp(MDApp):
             try:
                 data = self.offline_store.get(key)['order_data']
                 table_name = 'Inconnue'
-                if self.cache_store.exists('tables'):
-                    tables = self.cache_store.get('tables')['data']
-                    for t in tables:
-                        if t['id'] == data['table_id']:
-                            table_name = t['name']
-                            break
-                seat_num = data.get('seat_number', 0)
-                if seat_num == 0:
-                    display_text = f'Table: {table_name}'
+                if data.get('doc_type') == 'BV' or data.get('table_id') is None:
+                    display_text = 'Vente Rapide'
                 else:
-                    display_text = f'Table: {table_name} - Chaise {seat_num}'
+                    if self.cache_store.exists('tables'):
+                        tables = self.cache_store.get('tables')['data']
+                        for t in tables:
+                            if t['id'] == data['table_id']:
+                                table_name = t['name']
+                                break
+                    seat_num = data.get('seat_number', 0)
+                    if seat_num == 0:
+                        display_text = f'Table: {table_name}'
+                    else:
+                        display_text = f'Table: {table_name} - Chaise {seat_num}'
                 total_price = sum((item['price'] * item['qty'] for item in data['items']))
                 item_box = MDCard(orientation='horizontal', size_hint_y=None, height=dp(85), padding=dp(10), radius=[8], elevation=1, md_bg_color=(0.95, 0.95, 0.95, 1))
                 info_layout = MDBoxLayout(orientation='vertical', size_hint_x=0.7, spacing=dp(5))
@@ -2775,6 +2811,20 @@ class RestaurantApp(MDApp):
                 self._build_chairs_dialog(table, data)
         else:
             self.notify('Erreur : Données non disponibles Hors Ligne', 'error')
+
+    def open_quick_sale(self, instance=None):
+        self.stop_refresh()
+        self.current_table = None
+        self.current_seat = 0
+        self.cart = []
+        self.update_cart_btn()
+        if self.rv_products:
+            self.rv_products.scroll_y = 1.0
+        self.toggle_reminder_button(show=False)
+        self.toolbar_order.title = 'Vente Rapide'
+        self.screen_manager.current = 'order'
+        self.search_field.clear()
+        self.load_products()
 
     def open_seat_order(self, seat_num):
         if self.current_table is None:
@@ -3001,20 +3051,65 @@ class RestaurantApp(MDApp):
             if self.dialog_cart:
                 self.dialog_cart.dismiss()
             return
-        data = {'table_id': self.current_table['id'], 'seat_number': self.current_seat, 'items': self.cart, 'user_name': self.current_user_name, 'timestamp': str(datetime.now())}
+        if self.current_table:
+            self.execute_send_order()
+        else:
+            self.show_client_info_dialog()
+
+    def show_client_info_dialog(self):
+        from kivymd.uix.dialog import MDDialog
+        from kivymd.uix.button import MDFlatButton, MDFillRoundFlatButton
+        from kivymd.uix.boxlayout import MDBoxLayout
+        from kivy.metrics import dp
+        from kivy.uix.widget import Widget
+        content = MDBoxLayout(orientation='vertical', spacing=dp(20), size_hint_y=None, height=dp(210))
+        self.vr_phone_field = SmartTextField(hint_text='Téléphone (Optionnel)', icon_right='phone')
+        self.vr_address_field = SmartTextField(hint_text='Adresse (Optionnelle)', icon_right='map-marker')
+        content.add_widget(self.vr_phone_field)
+        content.add_widget(self.vr_address_field)
+        content.add_widget(Widget(size_hint_y=None, height=dp(10)))
+        buttons_box = MDBoxLayout(orientation='horizontal', spacing=dp(15), size_hint_y=None, height=dp(50))
+        btn_cancel = MDFlatButton(text='ANNULER', theme_text_color='Error', font_size='16sp', size_hint_x=0.4, pos_hint={'center_y': 0.5}, on_release=lambda x: self.dialog_vr_info.dismiss())
+        btn_send = MDFillRoundFlatButton(text='ENVOYER', font_size='18sp', md_bg_color=(0.15, 0.68, 0.37, 1), size_hint_x=0.6, pos_hint={'center_y': 0.5}, on_release=self.execute_send_order)
+        buttons_box.add_widget(btn_cancel)
+        buttons_box.add_widget(btn_send)
+        content.add_widget(buttons_box)
+        self.dialog_vr_info = MDDialog(title='Informations Client', type='custom', content_cls=content, pos_hint={'center_x': 0.5, 'center_y': 0.7}, radius=[16, 16, 16, 16])
+        self.dialog_vr_info.open()
+
+    def execute_send_order(self, instance=None):
+        if hasattr(self, 'dialog_vr_info') and self.dialog_vr_info:
+            self.dialog_vr_info.dismiss()
+        phone = ''
+        address = ''
+        order_number = None
+        if not self.current_table:
+            if hasattr(self, 'vr_phone_field'):
+                phone = self.vr_phone_field.get_value().strip()
+            if hasattr(self, 'vr_address_field'):
+                address = self.vr_address_field.get_value().strip()
+            if phone or address:
+                addr_trunc = address[:80]
+                order_number = f'PH:{phone}|AD:{addr_trunc}'
+        if self.current_table:
+            data = {'table_id': self.current_table['id'], 'seat_number': self.current_seat, 'items': self.cart, 'user_name': self.current_user_name, 'timestamp': str(datetime.now()), 'doc_type': 'BT'}
+            offline_key = f"offline_{self.current_table['id']}_{self.current_seat}"
+        else:
+            data = {'table_id': None, 'seat_number': 0, 'items': self.cart, 'user_name': self.current_user_name, 'timestamp': str(datetime.now()), 'doc_type': 'BV', 'order_number': order_number}
+            import time
+            offline_key = f'offline_vr_{int(time.time())}'
 
         def save_offline(req, error):
-            offline_key = f"offline_{self.current_table['id']}_{self.current_seat}"
             self.offline_store.put(offline_key, order_data=data)
             total_price = sum((float(item['price']) * float(item['qty']) for item in self.cart))
             self.notify(f'Sauvegardé Hors Ligne ({int(total_price)} DA)', 'warning')
             self.cart = []
             self.update_cart_btn()
             self.go_back()
-            if self.dialog_cart:
+            if hasattr(self, 'dialog_cart') and self.dialog_cart:
                 self.dialog_cart.dismiss()
         UrlRequest(f'{self.api_base}/api/submit_order', req_body=json.dumps(data), req_headers={'Content-type': 'application/json'}, method='POST', on_success=self.on_sent, on_failure=save_offline, on_error=save_offline, timeout=10)
-        if self.dialog_cart:
+        if hasattr(self, 'dialog_cart') and self.dialog_cart:
             self.dialog_cart.dismiss()
 
     def on_sent(self, req, result):
